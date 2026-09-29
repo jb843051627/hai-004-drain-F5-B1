@@ -68,15 +68,15 @@ class TDrainLevelStdServiceImplTest {
     // 1. 交接前一刻走干季版；交接那一瞬间老版已失效、新版刚生效——当下有效的只能有一版
     @Test
     void handoff_boundary_oneSecondBefore_dry_onInstant_wet() {
-        LevelJudgeResult before = service.evaluate(CX, new BigDecimal("2.00"), "2026-04-30 23:59:59");
+        LevelJudgeResult before = service.evaluate(CX, new BigDecimal("1.99"), "2026-04-30 23:59:59");
         assertTrue(before.isAvailable());
         assertEquals(4001L, before.getRuleId());
-        assertEquals(1, before.getLevel(), "2.00 贴着干季一档上限，临界取一档");
+        assertEquals(1, before.getLevel(), "1.99 未到干季一档上限 2.00，落一档");
 
         LevelJudgeResult on = service.evaluate(CX, new BigDecimal("2.00"), "2026-05-01 00:00:00");
         assertTrue(on.isAvailable());
         assertEquals(4002L, on.getRuleId(), "交接瞬间归湿季版");
-        assertEquals(2, on.getLevel(), "同一水位 2.00 在湿季版已过一档线 1.50，落二档");
+        assertEquals(2, on.getLevel(), "同一水位 2.00 在湿季版已达一档线 1.50，压线归高一档落二档");
 
         assertEquals(1, service.listAvailable(date("2026-05-01 00:00:00")).stream()
                 .filter(r -> CX.equals(r.getRuleCode())).count(), "交接瞬间同代号有效版本唯一");
@@ -99,18 +99,22 @@ class TDrainLevelStdServiceImplTest {
     @Test
     void overlap_priorityWins_bothPathsSameVersion() {
         Date at = date("2026-07-15 08:00:00");
-        LevelJudgeResult byCode = service.evaluate(CX, new BigDecimal("3.00"), "2026-07-15 08:00:00");
-        LevelJudgeResult top = service.evaluateTop(new BigDecimal("3.00"), "2026-07-15 08:00:00");
+        LevelJudgeResult byCode = service.evaluate(CX, new BigDecimal("2.99"), "2026-07-15 08:00:00");
+        LevelJudgeResult top = service.evaluateTop(new BigDecimal("2.99"), "2026-07-15 08:00:00");
         List<TDrainLevelStd> avail = service.listAvailable(at);
 
         assertEquals(4003L, byCode.getRuleId(), "加密版 priority=20 压过湿季版 10");
         assertEquals(4003L, avail.get(0).getId());
         assertEquals(avail.get(0).getId(), top.getRuleId(), "取优判定与可用列表第一版同一版");
         assertEquals(byCode.getRuleId(), top.getRuleId(), "两条判定路径取同一版");
-        assertEquals(2, top.getLevel(), "3.00 贴着加密版二档上限");
+        assertEquals(2, top.getLevel(), "2.99 未到加密版二档上限 3.00，落二档");
 
-        // 加密版 09-01 收口（失效不含），同一水位自然回湿季版：3.00<=3.50 仍落二档
-        LevelJudgeResult after = service.evaluate(CX, new BigDecimal("3.00"), "2026-09-01 00:00:00");
+        // 压线归高一档：2.99 与恰好 3.00 必须差开一档，3.00 不许再落二档
+        assertEquals(3, service.evaluate(CX, new BigDecimal("3.00"), "2026-07-15 08:00:00").getLevel(),
+                "3.00 压着加密版二档上限，临界取高一档落三档");
+
+        // 加密版 09-01 收口（失效不含），同一水位自然回湿季版：2.99<3.50 仍落二档
+        LevelJudgeResult after = service.evaluate(CX, new BigDecimal("2.99"), "2026-09-01 00:00:00");
         assertEquals(4002L, after.getRuleId());
         assertEquals(2, after.getLevel());
     }
@@ -125,17 +129,25 @@ class TDrainLevelStdServiceImplTest {
         assertFalse(service.usable(4004L, date("2025-05-01 08:00:00")));
     }
 
-    // 5. 早年只录到前两档的存量线照旧能用：缺三档不废线，高出二档归超档
+    // 5. 早年只录到前两档的存量线照旧能用：缺三档不废线，压线归高一档，达到二档线即归超档
     @Test
     void legacyTwoTierLine_stillUsable_overTopGoesFour() {
-        LevelJudgeResult r1 = service.evaluate(HL, new BigDecimal("1.50"), "2026-09-27 08:00:00");
+        LevelJudgeResult r1 = service.evaluate(HL, new BigDecimal("1.49"), "2026-09-27 08:00:00");
         assertEquals(4005L, r1.getRuleId());
         assertEquals(1, r1.getLevel());
         assertEquals(0, r1.getLevelLimit().compareTo(new BigDecimal("1.50")));
 
-        LevelJudgeResult r2 = service.evaluate(HL, new BigDecimal("4.50"), "2026-09-27 08:00:00");
-        assertEquals(2, r2.getLevel(), "临界取高档：等于二档上限仍判二档");
+        LevelJudgeResult rLine = service.evaluate(HL, new BigDecimal("1.50"), "2026-09-27 08:00:00");
+        assertEquals(2, rLine.getLevel(), "压着一档上限 1.50，临界取高一档落二档");
+
+        LevelJudgeResult r2 = service.evaluate(HL, new BigDecimal("4.49"), "2026-09-27 08:00:00");
+        assertEquals(2, r2.getLevel());
         assertEquals(0, r2.getLevelLimit().compareTo(new BigDecimal("4.50")));
+
+        LevelJudgeResult rEdge = service.evaluate(HL, new BigDecimal("4.50"), "2026-09-27 08:00:00");
+        assertTrue(rEdge.isAvailable());
+        assertEquals(4, rEdge.getLevel(), "三档未划线，压着二档上限即归超档");
+        assertNull(rEdge.getLevelLimit());
 
         LevelJudgeResult r3 = service.evaluate(HL, new BigDecimal("4.51"), "2026-09-27 08:00:00");
         assertTrue(r3.isAvailable());

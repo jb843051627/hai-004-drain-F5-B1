@@ -25,7 +25,7 @@ import com.fc.v2.service.ITDrainLevelStdService;
  * 3. 同刻几版叠着，照 priority 取优（数值越大越优先）；单代号判定、全量取优、可用列表
  *    共用同一把尺子，两边取的必须是同一版；
  * 4. 早年只录到前两档的存量线照旧能用：为 NULL 的档视作未划线，分档顺次往下着，
- *    水位高出全部已划档归超档(4)；
+ *    水位达到或高出全部已划档归超档(4)（临界取高一档）；
  * 5. 水位为负、或数量级明显离谱（三位数开外）的输入不收。
  *
  * 实现说明：判线版本是小型对照表，全量读入后在 Java 侧过滤窗口/状态并排序——
@@ -222,17 +222,19 @@ public class TDrainLevelStdServiceImpl implements ITDrainLevelStdService {
     }
 
     /**
-     * 分档：落在 (上一档上限, 本档上限] 取本档，与机组运行评定档同一口径；
-     * 为 NULL 的档视作未划线顺次往下着；高出全部已划档归超档(4)。
+     * 分档（下发口径：临界取高一档，与档案种子 drain_seed.sql 同口径、base=1）：
+     * 落在 [上一档上限, 本档上限) 取本档，等于本档上限即压线，归高一档；
+     * 为 NULL 的档视作未划线顺次往下着；达到或高出全部已划档归超档(4)。
+     * 与机组运行评定档 gradeOf 同一把尺，两处不许漂移。
      */
     private int levelOf(TDrainLevelStd rule, BigDecimal input) {
-        if (rule.getTh1Max() != null && input.compareTo(rule.getTh1Max()) <= 0) {
+        if (rule.getTh1Max() != null && input.compareTo(rule.getTh1Max()) < 0) {
             return 1;
         }
-        if (rule.getTh2Max() != null && input.compareTo(rule.getTh2Max()) <= 0) {
+        if (rule.getTh2Max() != null && input.compareTo(rule.getTh2Max()) < 0) {
             return 2;
         }
-        if (rule.getTh3Max() != null && input.compareTo(rule.getTh3Max()) <= 0) {
+        if (rule.getTh3Max() != null && input.compareTo(rule.getTh3Max()) < 0) {
             return 3;
         }
         return 4;

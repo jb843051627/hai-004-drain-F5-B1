@@ -237,6 +237,27 @@ class TDrainRunRecordServiceImplTest {
         assertEquals(2, r.getGradeLevel().intValue());
     }
 
+    // 7b. 下发口径：临界取高一档。阈值 1/5/10 上，压线值 1/5/10 不许落低档
+    @Test
+    void insert_thresholdBoundary_gradesUpOneTier() {
+        station(4L, "PS04", 0, new BigDecimal("1"), new BigDecimal("5"), new BigDecimal("10"));
+
+        assertEquals(1, gradeOf(4L, "0.99"), "0.99 未到一档线，落一档");
+        assertEquals(2, gradeOf(4L, "1.00"), "1.00 压着一档线，临界取高一档落二档");
+        assertEquals(2, gradeOf(4L, "4.99"));
+        assertEquals(3, gradeOf(4L, "5.00"), "5.00 压着二档线，落三档");
+        assertEquals(3, gradeOf(4L, "9.99"));
+        assertEquals(4, gradeOf(4L, "10.00"), "10.00 压着三档线，归超档");
+        assertEquals(4, gradeOf(4L, "12"));
+    }
+
+    /** 录一条取值：返回落库时写死的评定档。 */
+    private int gradeOf(long siteId, String qty) {
+        TDrainRunRecord r = form("YX-G-" + qty, (int) siteId, qty);
+        assertEquals(1, service.insertTDrainRunRecord(r));
+        return r.getGradeLevel().intValue();
+    }
+
     // 8. 同单号不重录
     @Test
     void insert_duplicateBillNo_rejected() {

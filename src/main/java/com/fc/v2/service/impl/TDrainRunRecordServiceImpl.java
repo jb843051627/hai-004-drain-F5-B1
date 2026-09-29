@@ -126,20 +126,22 @@ public class TDrainRunRecordServiceImpl extends ServiceImpl<TDrainRunRecordMappe
     }
 
     /**
-     * 照档案阈值定运行评定档：qty 落在 (上一档上限, 本档上限] 取本档；
-     * 某档上限为 NULL 表示该档未划线，顺次往下着；读数缺失或超过全部已划线档归 4 档。
+     * 照档案阈值定运行评定档（下发口径：临界取高一档，与档案种子 drain_seed.sql、
+     * 判线 levelOf 同一把尺，base=1）：qty 落在 [上一档上限, 本档上限) 取本档，
+     * 等于本档上限即压线，归高一档；某档上限为 NULL 表示该档未划线，顺次往下着；
+     * 读数缺失或达到/超过全部已划线档归 4 档。
      */
     private int gradeOf(TDrainStation arch, BigDecimal qty) {
         if (qty == null) {
             return 0;
         }
-        if (arch.getTh1Max() != null && qty.compareTo(arch.getTh1Max()) <= 0) {
+        if (arch.getTh1Max() != null && qty.compareTo(arch.getTh1Max()) < 0) {
             return 1;
         }
-        if (arch.getTh2Max() != null && qty.compareTo(arch.getTh2Max()) <= 0) {
+        if (arch.getTh2Max() != null && qty.compareTo(arch.getTh2Max()) < 0) {
             return 2;
         }
-        if (arch.getTh3Max() != null && qty.compareTo(arch.getTh3Max()) <= 0) {
+        if (arch.getTh3Max() != null && qty.compareTo(arch.getTh3Max()) < 0) {
             return 3;
         }
         return 4;
