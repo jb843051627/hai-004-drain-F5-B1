@@ -71,12 +71,12 @@ class TDrainLevelStdServiceImplTest {
         LevelJudgeResult before = service.evaluate(CX, new BigDecimal("2.00"), "2026-04-30 23:59:59");
         assertTrue(before.isAvailable());
         assertEquals(4001L, before.getRuleId());
-        assertEquals(1, before.getLevel(), "2.00 贴着干季一档上限，临界取一档");
+        assertEquals(2, before.getLevel(), "2.00 压着干季一档上限，临界取高一档，落二档");
 
         LevelJudgeResult on = service.evaluate(CX, new BigDecimal("2.00"), "2026-05-01 00:00:00");
         assertTrue(on.isAvailable());
         assertEquals(4002L, on.getRuleId(), "交接瞬间归湿季版");
-        assertEquals(2, on.getLevel(), "同一水位 2.00 在湿季版已过一档线 1.50，落二档");
+        assertEquals(2, on.getLevel(), "同一水位 2.00 已压过湿季一档线 1.50，落二档");
 
         assertEquals(1, service.listAvailable(date("2026-05-01 00:00:00")).stream()
                 .filter(r -> CX.equals(r.getRuleCode())).count(), "交接瞬间同代号有效版本唯一");
@@ -107,9 +107,9 @@ class TDrainLevelStdServiceImplTest {
         assertEquals(4003L, avail.get(0).getId());
         assertEquals(avail.get(0).getId(), top.getRuleId(), "取优判定与可用列表第一版同一版");
         assertEquals(byCode.getRuleId(), top.getRuleId(), "两条判定路径取同一版");
-        assertEquals(2, top.getLevel(), "3.00 贴着加密版二档上限");
+        assertEquals(3, top.getLevel(), "3.00 压着加密版二档上限，临界取高一档，落三档");
 
-        // 加密版 09-01 收口（失效不含），同一水位自然回湿季版：3.00<=3.50 仍落二档
+        // 加密版 09-01 收口（失效不含），同一水位自然回湿季版：3.00 未压到湿季二档线 3.50 仍落二档
         LevelJudgeResult after = service.evaluate(CX, new BigDecimal("3.00"), "2026-09-01 00:00:00");
         assertEquals(4002L, after.getRuleId());
         assertEquals(2, after.getLevel());
@@ -125,17 +125,25 @@ class TDrainLevelStdServiceImplTest {
         assertFalse(service.usable(4004L, date("2025-05-01 08:00:00")));
     }
 
-    // 5. 早年只录到前两档的存量线照旧能用：缺三档不废线，高出二档归超档
+    // 5. 早年只录到前两档的存量线照旧能用：缺三档不废线；临界取高一档，压着最高已划档归超档
     @Test
     void legacyTwoTierLine_stillUsable_overTopGoesFour() {
-        LevelJudgeResult r1 = service.evaluate(HL, new BigDecimal("1.50"), "2026-09-27 08:00:00");
-        assertEquals(4005L, r1.getRuleId());
-        assertEquals(1, r1.getLevel());
-        assertEquals(0, r1.getLevelLimit().compareTo(new BigDecimal("1.50")));
+        LevelJudgeResult below1 = service.evaluate(HL, new BigDecimal("1.49"), "2026-09-27 08:00:00");
+        assertEquals(4005L, below1.getRuleId());
+        assertEquals(1, below1.getLevel());
+        assertEquals(0, below1.getLevelLimit().compareTo(new BigDecimal("1.50")));
 
-        LevelJudgeResult r2 = service.evaluate(HL, new BigDecimal("4.50"), "2026-09-27 08:00:00");
-        assertEquals(2, r2.getLevel(), "临界取高档：等于二档上限仍判二档");
-        assertEquals(0, r2.getLevelLimit().compareTo(new BigDecimal("4.50")));
+        LevelJudgeResult on1 = service.evaluate(HL, new BigDecimal("1.50"), "2026-09-27 08:00:00");
+        assertEquals(2, on1.getLevel(), "临界取高档：压着一档上限即够到二档");
+        assertEquals(0, on1.getLevelLimit().compareTo(new BigDecimal("4.50")));
+
+        LevelJudgeResult below2 = service.evaluate(HL, new BigDecimal("4.49"), "2026-09-27 08:00:00");
+        assertEquals(2, below2.getLevel());
+
+        LevelJudgeResult on2 = service.evaluate(HL, new BigDecimal("4.50"), "2026-09-27 08:00:00");
+        assertTrue(on2.isAvailable());
+        assertEquals(4, on2.getLevel(), "压着最高已划档（三档未划线）：临界取高，归超档");
+        assertNull(on2.getLevelLimit());
 
         LevelJudgeResult r3 = service.evaluate(HL, new BigDecimal("4.51"), "2026-09-27 08:00:00");
         assertTrue(r3.isAvailable());
@@ -144,7 +152,21 @@ class TDrainLevelStdServiceImplTest {
         assertTrue(service.usable(4005L, date("2026-09-27 08:00:00")), "eff_end 为空=长期有效");
     }
 
-    // 6. 水位负数不收；数量级明显不对（三位数开外）不收；100 为可收边界
+    // 6. 三档线逐级压线：每个上限本身归高一档，差一丝归本档，最高线压着即超档
+    @Test
+    void fullThreeTierLine_everyBoundaryGoesUp() {
+        // 09-27 汛期加密版已收口，城东走湿季版 1.50/3.50/6.00
+        String at = "2026-09-27 08:00:00";
+        assertEquals(1, service.evaluate(CX, new BigDecimal("1.49"), at).getLevel());
+        assertEquals(2, service.evaluate(CX, new BigDecimal("1.50"), at).getLevel(), "压一档线归二档");
+        assertEquals(2, service.evaluate(CX, new BigDecimal("3.49"), at).getLevel());
+        assertEquals(3, service.evaluate(CX, new BigDecimal("3.50"), at).getLevel(), "压二档线归三档");
+        assertEquals(3, service.evaluate(CX, new BigDecimal("5.99"), at).getLevel());
+        assertEquals(4, service.evaluate(CX, new BigDecimal("6.00"), at).getLevel(), "压三档线归超档");
+        assertEquals(4, service.evaluate(CX, new BigDecimal("6.01"), at).getLevel());
+    }
+
+    // 7. 水位负数不收；数量级明显不对（三位数开外）不收；100 为可收边界
     @Test
     void negativeAndOutOfMagnitude_rejected_butBoundary100Accepted() {
         LevelJudgeResult neg = service.evaluate(CX, new BigDecimal("-0.01"), "2026-09-27 08:00:00");
@@ -166,7 +188,7 @@ class TDrainLevelStdServiceImplTest {
                 "老签名：越界输入返回 0");
     }
 
-    // 7. 参数缺失/时刻坏格式不收；空代号不收
+    // 8. 参数缺失/时刻坏格式不收；空代号不收
     @Test
     void missingParams_andBadTimeFormat_rejected() {
         assertFalse(service.evaluate(CX, null, "2026-09-27 08:00:00").isAccepted());
@@ -176,7 +198,7 @@ class TDrainLevelStdServiceImplTest {
                 "时刻留空按当下，不返回 null");
     }
 
-    // 8. 不存在的代号：输入收下，但按无可用判线回
+    // 9. 不存在的代号：输入收下，但按无可用判线回
     @Test
     void unknownCode_noRule_notRejected() {
         LevelJudgeResult r = service.evaluate("LS-NOPE", new BigDecimal("1"), "2026-09-27 08:00:00");
@@ -184,7 +206,7 @@ class TDrainLevelStdServiceImplTest {
         assertFalse(r.isAvailable());
     }
 
-    // 9. 已删判线从可用集合剔除；countAvailable 随窗口/状态走
+    // 10. 已删判线从可用集合剔除；countAvailable 随窗口/状态走
     @Test
     void deletedExcluded_countFollowsWindowAndStatus() {
         Date summer = date("2026-07-15 08:00:00");
@@ -199,7 +221,7 @@ class TDrainLevelStdServiceImplTest {
         assertEquals(2, service.countAvailable(winter), "冬季在窗的是干季版+长期有效的合流存量线");
     }
 
-    // 10. priority 并列时按 ruleCode、id 确定性兜底，取版结果稳定
+    // 11. priority 并列时按 ruleCode、id 确定性兜底，取版结果稳定
     @Test
     void samePriority_tieBreaker_isDeterministic() {
         seed(4006L, CX, "并列同代号甲", "1", "2", "3",
@@ -212,7 +234,7 @@ class TDrainLevelStdServiceImplTest {
                 service.evaluateTop(new BigDecimal("1.5"), "2026-08-10 08:00:00").getRuleId());
     }
 
-    // 11. selectById 直查不走窗口（旁路台账用），但 usable 走窗口
+    // 12. selectById 直查不走窗口（旁路台账用），但 usable 走窗口
     @Test
     void selectById_raw_usable_windowed() {
         assertSame(rows.get(4001L), service.selectTDrainLevelStdById(4001L));

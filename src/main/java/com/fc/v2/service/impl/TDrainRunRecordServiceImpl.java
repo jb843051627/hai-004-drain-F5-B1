@@ -29,8 +29,8 @@ import org.springframework.stereotype.Service;
  *    硬塞 status=0；分页也由调用方 startPage() 一处开，服务层不再自行分页（两处都开时
  *    里层 startPage(1,10) 会把页面的页号页长顶掉）；
  * 3. 受录泵站必须是在册在用档案：不存在/已停用不收，站点编号照档案回填，不信表单手填；
- * 4. 评定档照在档案阈值算，阈值允许只维护部分档位：某档上限为 NULL 视作该档未划线，
- *    顺次往下一档着，不许对 null 比较把整单录崩。
+ * 4. 评定档照在档案阈值算（临界取高一档：恰好压着上限即归高一档），阈值允许只维护部分档位：
+ *    某档上限为 NULL 视作该档未划线，顺次往下一档着，不许对 null 比较把整单录崩。
  *
  * @author fuce
  * @date 2026-09-12
@@ -126,20 +126,21 @@ public class TDrainRunRecordServiceImpl extends ServiceImpl<TDrainRunRecordMappe
     }
 
     /**
-     * 照档案阈值定运行评定档：qty 落在 (上一档上限, 本档上限] 取本档；
-     * 某档上限为 NULL 表示该档未划线，顺次往下着；读数缺失或超过全部已划线档归 4 档。
+     * 照档案阈值定运行评定档（下发口径：临界取高一档）：qty 严格小于本档上限才取本档，
+     * 恰好压着上限即算够到下一档，归高一档——各档区间为 [上一档上限, 本档上限)，一档自 0 起；
+     * 某档上限为 NULL 表示该档未划线，顺次往下着；读数缺失或达到/超过全部已划线档归 4 档。
      */
     private int gradeOf(TDrainStation arch, BigDecimal qty) {
         if (qty == null) {
             return 0;
         }
-        if (arch.getTh1Max() != null && qty.compareTo(arch.getTh1Max()) <= 0) {
+        if (arch.getTh1Max() != null && qty.compareTo(arch.getTh1Max()) < 0) {
             return 1;
         }
-        if (arch.getTh2Max() != null && qty.compareTo(arch.getTh2Max()) <= 0) {
+        if (arch.getTh2Max() != null && qty.compareTo(arch.getTh2Max()) < 0) {
             return 2;
         }
-        if (arch.getTh3Max() != null && qty.compareTo(arch.getTh3Max()) <= 0) {
+        if (arch.getTh3Max() != null && qty.compareTo(arch.getTh3Max()) < 0) {
             return 3;
         }
         return 4;
